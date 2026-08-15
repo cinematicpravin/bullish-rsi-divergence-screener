@@ -572,11 +572,76 @@ with st.sidebar:
 # ------------------------------------------------------------
 today = date.today()
 
-# Keep the date in the widget's own session-state key.
-# This is important because changing a separate state variable does not
-# change the value of an already-created Streamlit text_input widget.
+# The text_input widget owns this key. Button callbacks run BEFORE the
+# next script rerun, so they can safely change this state.
 if "date_text_input" not in st.session_state:
     st.session_state.date_text_input = today.strftime("%d-%b-%Y")
+
+
+def cached_trading_dates():
+    """Return all locally cached NSE trading dates from YYYYMMDD.csv files."""
+    dates = []
+
+    for f in DATA_DIR.glob("*.csv"):
+        try:
+            dates.append(
+                datetime.strptime(
+                    f.stem,
+                    "%Y%m%d"
+                ).date()
+            )
+        except ValueError:
+            # Ignore CSVs that are not named as YYYYMMDD.
+            continue
+
+    return sorted(set(dates))
+
+
+def set_previous_trading_day():
+    current_text = st.session_state.get(
+        "date_text_input",
+        today.strftime("%d-%b-%Y")
+    )
+
+    try:
+        current = datetime.strptime(
+            current_text,
+            "%d-%b-%Y"
+        ).date()
+    except ValueError:
+        current = today
+
+    dates = cached_trading_dates()
+    candidates = [d for d in dates if d < current]
+
+    if candidates:
+        st.session_state.date_text_input = max(
+            candidates
+        ).strftime("%d-%b-%Y")
+
+
+def set_next_trading_day():
+    current_text = st.session_state.get(
+        "date_text_input",
+        today.strftime("%d-%b-%Y")
+    )
+
+    try:
+        current = datetime.strptime(
+            current_text,
+            "%d-%b-%Y"
+        ).date()
+    except ValueError:
+        current = today
+
+    dates = cached_trading_dates()
+    candidates = [d for d in dates if d > current]
+
+    if candidates:
+        st.session_state.date_text_input = min(
+            candidates
+        ).strftime("%d-%b-%Y")
+
 
 date_text = st.text_input(
     "📅 DD-MMM-YYYY",
@@ -595,63 +660,61 @@ except ValueError:
     valid_date = False
 
 # Build known/cached trading dates from local CSV files.
-def cached_trading_dates():
-    dates = []
-    for f in DATA_DIR.glob("*.csv"):
-        try:
-            dates.append(
-                datetime.strptime(
-                    f.stem,
-                    "%Y%m%d"
-                ).date()
-            )
-        except Exception:
-            pass
-    return sorted(set(dates))
-
 trading_dates = cached_trading_dates()
+
 
 def previous_trading_day(d):
     candidates = [x for x in trading_dates if x < d]
     return max(candidates) if candidates else None
 
+
 def next_trading_day(d):
     candidates = [x for x in trading_dates if x > d]
     return min(candidates) if candidates else None
 
-# If the typed date is already cached, use it.
-# If it is a weekend/holiday and cached history has surrounding days,
-# automatically move to the previous cached trading day.
+
+# For a manually typed weekend/holiday, show the previous cached trading
+# day, but DO NOT overwrite the widget state automatically. This prevents
+# Streamlit widget-state conflicts and keeps the typed date visible.
 selected_date = typed_date
 
 if valid_date and trading_dates and typed_date not in trading_dates:
     prev_day = previous_trading_day(typed_date)
+
     if prev_day is not None:
         selected_date = prev_day
+
         st.info(
             f"📅 {typed_date.strftime('%d-%b-%Y')} was not a trading day. "
-            f"Using previous trading day: **{selected_date.strftime('%d-%b-%Y')}**"
+            f"Using previous trading day: "
+            f"**{selected_date.strftime('%d-%b-%Y')}**"
         )
 
 if valid_date:
-    # Normalize manually entered date to the requested DD-MMM-YYYY format.
-    st.session_state.date_text_input = selected_date.strftime("%d-%b-%Y")
 
     st.write(
-        f"Selected Trading Date: **{selected_date.strftime('%d-%b-%Y')}**"
+        f"Selected Trading Date: "
+        f"**{selected_date.strftime('%d-%b-%Y')}**"
     )
 
-    # Navigation buttons
-    col_prev, col_get, col_next = st.columns([1, 2, 1])
+    col_prev, col_get, col_next = st.columns(
+        [1, 2, 1]
+    )
 
-    prev_cached = previous_trading_day(selected_date)
-    next_cached = next_trading_day(selected_date)
+    prev_cached = previous_trading_day(
+        selected_date
+    )
+
+    next_cached = next_trading_day(
+        selected_date
+    )
 
     with col_prev:
-        prev_clicked = st.button(
+        st.button(
             "◀ Previous Trading Day",
             use_container_width=True,
-            disabled=(prev_cached is None)
+            disabled=(prev_cached is None),
+            on_click=set_previous_trading_day
         )
 
     with col_get:
@@ -662,30 +725,19 @@ if valid_date:
         )
 
     with col_next:
-        next_clicked = st.button(
+        st.button(
             "Next Trading Day ▶",
             use_container_width=True,
-            disabled=(next_cached is None)
+            disabled=(next_cached is None),
+            on_click=set_next_trading_day
         )
-
-    if prev_clicked and prev_cached is not None:
-        # Update the actual text_input widget state, then rerun.
-        st.session_state.date_text_input = (
-            prev_cached.strftime("%d-%b-%Y")
-        )
-        st.rerun()
-
-    if next_clicked and next_cached is not None:
-        # Update the actual text_input widget state, then rerun.
-        st.session_state.date_text_input = (
-            next_cached.strftime("%d-%b-%Y")
-        )
-        st.rerun()
 
 else:
     get_watchlist = False
+
     st.error(
-        "Invalid date. Please use DD-MMM-YYYY, for example 14-Aug-2026."
+        "Invalid date. Please use DD-MMM-YYYY, "
+        "for example 14-Aug-2026."
     )
 
 
