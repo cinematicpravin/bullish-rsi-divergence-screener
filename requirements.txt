@@ -1,0 +1,5 @@
+streamlit
+pandas
+numpy
+requests
+nse-archives==1.2.4
